@@ -1,9 +1,8 @@
-// File: src/bigQueryORM.ts
 import { BigQuery } from "@google-cloud/bigquery";
 import * as fs from "fs";
 import * as path from "path";
 import { Model } from "./model";
-import { DataTypes } from "./dataTypes";
+import { DataType, DataTypes } from "./dataTypes";
 import { QueryInterface } from "./queryInterface";
 import { dataTypeToSchemaField } from "./utils";
 
@@ -11,13 +10,13 @@ export interface BigQueryORMConfig {
   projectId: string;
   dataset: string;
   keyFilename?: string;
-  metaDataset?: string;
-  logging?: boolean; // For flexibility
+  metaDataset: string;
+  logging?: boolean;
 }
 
 export class BigQueryORM {
   public bigquery: BigQuery;
-  public config: Required<BigQueryORMConfig>;
+  public config: BigQueryORMConfig;
   public models: Record<string, typeof Model> = {};
   private queryInterface: QueryInterface;
 
@@ -27,7 +26,7 @@ export class BigQueryORM {
       dataset:
         config?.dataset || process.env.BIGQUERY_DATASET || "default_dataset",
       keyFilename:
-        config?.keyFilename || process.env.GOOGLE_APPLICATION_CREDENTIALS || "", // now guaranteed string
+        config?.keyFilename || process.env.GOOGLE_APPLICATION_CREDENTIALS,
       metaDataset: config?.metaDataset || "bigquery_orm_meta",
       logging: config?.logging ?? false,
     };
@@ -40,7 +39,7 @@ export class BigQueryORM {
 
     this.bigquery = new BigQuery({
       projectId: this.config.projectId,
-      keyFilename: this.config.keyFilename || undefined,
+      keyFilename: this.config.keyFilename,
     });
     this.queryInterface = new QueryInterface(this);
   }
@@ -51,11 +50,11 @@ export class BigQueryORM {
 
   define(
     name: string,
-    attributes: Record<string, any>,
+    attributes: Record<string, DataType>,
     options: { tableName?: string; primaryKey?: string } = {}
   ): typeof Model {
     class DynamicModel extends Model {}
-    (DynamicModel as any).init(attributes, {
+    DynamicModel.init(attributes, {
       orm: this,
       tableName: options.tableName,
       primaryKey: options.primaryKey,
@@ -67,7 +66,9 @@ export class BigQueryORM {
   async loadModels(modelsPath: string): Promise<void> {
     const files = fs
       .readdirSync(modelsPath)
-      .filter((f) => f.endsWith(".ts") || f.endsWith(".js"));
+      .filter(
+        (f) => !f.endsWith(".d.ts") && (f.endsWith(".ts") || f.endsWith(".js"))
+      );
     for (const file of files) {
       const modelFunc = (await import(path.resolve(modelsPath, file))).default;
       if (typeof modelFunc === "function") {
@@ -75,7 +76,6 @@ export class BigQueryORM {
       }
     }
 
-    // Call associate if defined
     for (const model of Object.values(this.models)) {
       if ((model as any).associate) {
         (model as any).associate(this.models);
@@ -88,7 +88,7 @@ export class BigQueryORM {
   ): Promise<void> {
     const { force = false, alter = false } = options;
     const dataset = this.bigquery.dataset(this.config.dataset);
-    let [dsExists] = await dataset.exists();
+    const [dsExists] = await dataset.exists();
     if (!dsExists) {
       await dataset.create();
     }
@@ -105,7 +105,6 @@ export class BigQueryORM {
         );
         await table.create({ schema });
       } else if (alter) {
-        // Compare and alter schema; implement diff logic for scalability.
         console.warn(
           "Alter sync not fully implemented; manual migration recommended."
         );
@@ -142,7 +141,10 @@ export class BigQueryORM {
 
     const migrationFiles = fs
       .readdirSync(migrationsPath)
-      .filter((f) => f.endsWith(".ts") || f.endsWith(".js"));
+      .filter(
+        (f) => !f.endsWith(".d.ts") && (f.endsWith(".ts") || f.endsWith(".js"))
+      );
+
     migrationFiles.sort();
 
     for (const file of migrationFiles) {
@@ -172,7 +174,10 @@ export class BigQueryORM {
     const migrationName = rows[0].name;
     const migrationFiles = fs
       .readdirSync(migrationsPath)
-      .filter((f) => f.endsWith(".ts") || f.endsWith(".js"));
+      .filter(
+        (f) => !f.endsWith(".d.ts") && (f.endsWith(".ts") || f.endsWith(".js"))
+      );
+
     const migrationFile = migrationFiles.find(
       (f) => path.basename(f, path.extname(f)) === migrationName
     );
@@ -186,17 +191,14 @@ export class BigQueryORM {
 
     await migration.down(this.queryInterface, this);
 
-    const sql = `DELETE FROM \`${this.config.projectId}.${this.config.metaDataset}.migrations\` WHERE name = '${migrationName}'`;
-    await this.bigquery.query(sql);
+    const sql = `DELETE FROM \`${this.config.projectId}.${this.config.metaDataset}.migrations\` WHERE name = @migrationName`;
+    await this.bigquery.query({ query: sql, params: { migrationName } });
   }
 
-  // Transaction simulation: Run queries in a batch job.
   async transaction(fn: (qi: QueryInterface) => Promise<void>): Promise<void> {
-    // BigQuery no transactions; use job for atomic insert/update, but not full.
     try {
       await fn(this.queryInterface);
     } catch (err) {
-      // No rollback; log error.
       if (this.config.logging) console.error("Transaction failed:", err);
       throw err;
     }

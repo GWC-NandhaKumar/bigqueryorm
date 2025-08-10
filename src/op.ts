@@ -1,6 +1,3 @@
-// File: src/op.ts
-// Extended Op with more operators for flexibility.
-
 export const Op = {
   eq: "=",
   ne: "!=",
@@ -21,7 +18,7 @@ export const Op = {
   not: "NOT",
   any: "ANY",
   all: "ALL",
-  contains: "@>", // For JSON/ARRAY
+  contains: "@>",
   contained: "<@",
 } as const;
 

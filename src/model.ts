@@ -1,20 +1,19 @@
-// File: src/model.ts
-import { BigQuery } from "@google-cloud/bigquery";
+import { BigQuery, Job } from "@google-cloud/bigquery";
 import { BigQueryORM } from "./bigQueryORM";
 import { Op, Operator } from "./op";
 import { DataTypes, DataType } from "./dataTypes";
 import { buildWhereClause } from "./utils";
 
 export interface WhereOptions {
-  [key: string]: any | { [key in Operator]?: any } | WhereOptions[]; // Support for AND/OR nested
+  [key: string]: any | { [key in Operator]?: any } | WhereOptions[];
 }
 
 export interface IncludeOptions {
   model: typeof Model;
   as?: string;
   where?: WhereOptions;
-  required?: boolean; // INNER vs LEFT JOIN
-  attributes?: string[]; // Select specific attributes for included model
+  required?: boolean;
+  attributes?: string[];
 }
 
 export interface FindOptions {
@@ -34,7 +33,7 @@ export interface Association {
   foreignKey: string;
   otherKey?: string;
   as?: string;
-  through?: typeof Model; // For belongsToMany
+  through?: typeof Model;
 }
 
 export abstract class Model {
@@ -54,7 +53,6 @@ export abstract class Model {
     this.primaryKey = options.primaryKey || "id";
   }
 
-  // Association methods
   static belongsTo(
     target: typeof Model,
     options: { foreignKey?: string; as?: string } = {}
@@ -62,7 +60,6 @@ export abstract class Model {
     const foreignKey = options.foreignKey || `${target.name.toLowerCase()}Id`;
     const as = options.as || target.name.toLowerCase();
     this.associations[as] = { type: "belongsTo", target, foreignKey, as };
-    // Add foreignKey to attributes if not present
     if (!this.attributes[foreignKey]) {
       this.attributes[foreignKey] = DataTypes.INTEGER;
     }
@@ -108,13 +105,9 @@ export abstract class Model {
     };
   }
 
-  // Query methods
   static async findAll(options: FindOptions = {}): Promise<any[]> {
     const { sql, params } = this.buildSelectQuery(options);
-    const [rows] = await this.orm.bigquery.query({
-      query: sql,
-      params: Object.values(params),
-    });
+    const [rows] = await this.orm.bigquery.query({ query: sql, params });
     if (options.raw) {
       return rows;
     }
@@ -136,10 +129,7 @@ export abstract class Model {
   static async count(options: FindOptions = {}): Promise<number> {
     const select = `COUNT(DISTINCT \`${this.tableName}\`.\`${this.primaryKey}\`) AS count`;
     const { sql, params } = this.buildSelectQuery(options, select);
-    const [rows] = await this.orm.bigquery.query({
-      query: sql,
-      params: Object.values(params),
-    });
+    const [rows] = await this.orm.bigquery.query({ query: sql, params });
     return rows[0]?.count || 0;
   }
 
@@ -148,7 +138,7 @@ export abstract class Model {
       .dataset(this.orm.config.dataset)
       .table(this.tableName);
     await table.insert([data]);
-    return data; // BigQuery insert doesn't return the row; can query if needed
+    return data;
   }
 
   static async bulkCreate(data: Record<string, any>[]): Promise<void> {
@@ -165,73 +155,59 @@ export abstract class Model {
     const setClauses = Object.entries(data)
       .map(([field]) => `\`${field}\` = @set_${field}`)
       .join(", ");
-
     const setValues = Object.entries(data).reduce(
       (acc, [field, value]) => ({ ...acc, [`set_${field}`]: value }),
       {}
     );
-
     const { clause: whereClause, params: whereValues } = buildWhereClause(
       options.where
     );
-
-    const sql = `UPDATE \`${this.orm.config.dataset}.${this.tableName}\`
-               SET ${setClauses}
-               WHERE ${whereClause || "TRUE"}`;
-
+    const sql = `UPDATE \`${this.orm.config.dataset}.${
+      this.tableName
+    }\` SET ${setClauses} WHERE ${whereClause || "TRUE"}`;
     const allParams = { ...setValues, ...whereValues };
-
-    // BigQuery query() returns [rows, metadata]
-    const [rows, job] = await this.orm.bigquery.query({
+    const [, job] = (await this.orm.bigquery.query({
       query: sql,
-      params: Object.values(allParams),
-    });
-
-    // numDmlAffectedRows is the BigQuery property for DML row count
-    const modifiedCount = Number((job as any)?.numDmlAffectedRows ?? 0);
-    return modifiedCount;
+      params: allParams,
+    })) as [any, Job];
+    const [metadata] = await job.getMetadata();
+    return Number(metadata.statistics?.query?.numDmlAffectedRows || 0);
   }
 
   static async destroy(options: { where: WhereOptions }): Promise<number> {
     const { clause, params } = buildWhereClause(options.where);
-
-    const sql = `DELETE FROM \`${this.orm.config.dataset}.${this.tableName}\`
-               WHERE ${clause || "TRUE"}`;
-
-    // [rows, job] pattern
-    const [rows, job] = await this.orm.bigquery.query({
-      query: sql,
-      params: Object.values(params),
-    });
-
-    return Number((job as any)?.numDmlAffectedRows ?? 0);
+    const sql = `DELETE FROM \`${this.orm.config.dataset}.${
+      this.tableName
+    }\` WHERE ${clause || "TRUE"}`;
+    const [, job] = (await this.orm.bigquery.query({ query: sql, params })) as [
+      any,
+      Job
+    ];
+    const [metadata] = await job.getMetadata();
+    return Number(metadata.statistics?.query?.numDmlAffectedRows || 0);
   }
 
   static async increment(
     fields: string | string[],
     options: { by?: number; where: WhereOptions }
   ): Promise<number> {
-    const by = options.by ?? 1;
+    const by = options.by || 1;
     const fieldArray = Array.isArray(fields) ? fields : [fields];
-
     const setClauses = fieldArray
       .map((field) => `\`${field}\` = \`${field}\` + ${by}`)
       .join(", ");
-
     const { clause: whereClause, params: whereValues } = buildWhereClause(
       options.where
     );
-
-    const sql = `UPDATE \`${this.orm.config.dataset}.${this.tableName}\`
-               SET ${setClauses}
-               WHERE ${whereClause || "TRUE"}`;
-
-    const [rows, job] = await this.orm.bigquery.query({
+    const sql = `UPDATE \`${this.orm.config.dataset}.${
+      this.tableName
+    }\` SET ${setClauses} WHERE ${whereClause || "TRUE"}`;
+    const [, job] = (await this.orm.bigquery.query({
       query: sql,
-      params: Object.values(whereValues),
-    });
-
-    return Number((job as any)?.numDmlAffectedRows ?? 0);
+      params: whereValues,
+    })) as [any, Job];
+    const [metadata] = await job.getMetadata();
+    return Number(metadata.statistics?.query?.numDmlAffectedRows || 0);
   }
 
   static async decrement(
@@ -251,10 +227,7 @@ export abstract class Model {
     let sql = `FROM \`${dataset}.${this.tableName}\` AS \`${mainAlias}\``;
     const params: Record<string, any> = {};
     const whereClauses: string[] = [];
-    const includeParams: Record<string, any> = {};
 
-    // Joins for include
-    const assocByAs = new Map<string, Association>();
     if (options.include) {
       for (const inc of options.include) {
         const as = inc.as || inc.model.tableName;
@@ -263,10 +236,7 @@ export abstract class Model {
         );
         if (!assoc)
           throw new Error(`Association not found for ${inc.model.name}`);
-        assocByAs.set(as, assoc);
-
         const joinType = inc.required ? "INNER JOIN" : "LEFT OUTER JOIN";
-
         let joinOn: string;
         if (assoc.type === "belongsTo") {
           joinOn = `\`${mainAlias}\`.\`${assoc.foreignKey}\` = \`${as}\`.\`${inc.model.primaryKey}\``;
@@ -286,35 +256,29 @@ export abstract class Model {
           sql += ` ${joinType} \`${dataset}.${inc.model.tableName}\` AS \`${as}\` ON ${joinOn}`;
         }
 
-        // Include where
         if (inc.where) {
           const { clause, params: incParams } = buildWhereClause(inc.where);
           const prefixedClause = clause.replace(/`([^`]+)`/g, `\`${as}\`.$1`);
           whereClauses.push(prefixedClause);
-          Object.assign(includeParams, incParams);
+          Object.assign(params, incParams);
         }
       }
     }
 
-    // Main where
     let mainWhere = "";
-    let mainParams = {};
     if (options.where) {
       const { clause, params: mParams } = buildWhereClause(options.where);
       mainWhere = clause;
-      mainParams = mParams;
+      Object.assign(params, mParams);
     }
 
-    // Combine wheres
     let whereClause = [mainWhere, ...whereClauses]
       .filter((c) => c)
       .join(" AND ");
     if (whereClause) {
       sql += ` WHERE ${whereClause}`;
     }
-    Object.assign(params, mainParams, includeParams);
 
-    // Build select with aliases
     let selectClause: string[] = [];
     if (selectOverride) {
       selectClause.push(selectOverride);
@@ -364,7 +328,6 @@ export abstract class Model {
     includes: IncludeOptions[]
   ): any[] {
     if (!includes.length) {
-      // No includes, strip main prefix
       return rows.map((row) => {
         const result: any = {};
         for (const [key, value] of Object.entries(row)) {
@@ -377,46 +340,39 @@ export abstract class Model {
     }
 
     const parentMap = new Map<any, any>();
-    const assocByAs = new Map<string, Association>();
-    for (const inc of includes) {
-      const as = inc.as || inc.model.tableName;
-      const assoc = Object.values(this.associations).find((a) => a.as === as);
-      if (assoc) {
-        assocByAs.set(as, assoc);
-      }
-    }
-
     for (const row of rows) {
       const parentPKValue = row[`${this.tableName}_${this.primaryKey}`];
-      if (parentPKValue === null) continue; // Skip if no parent
+      if (parentPKValue == null) continue;
 
-      if (!parentMap.has(parentPKValue)) {
-        const parent: any = {};
+      let parent = parentMap.get(parentPKValue);
+      if (!parent) {
+        parent = {};
         for (const field in this.attributes) {
           parent[field] = row[`${this.tableName}_${field}`];
         }
         for (const inc of includes) {
           const as = inc.as || inc.model.tableName;
-          const assoc = assocByAs.get(as);
-          if (!assoc) continue;
-          if (assoc.type === "hasMany" || assoc.type === "belongsToMany") {
-            parent[as] = [];
-          } else {
-            parent[as] = null;
+          const assoc = Object.values(this.associations).find(
+            (a) => a.as === as
+          );
+          if (assoc) {
+            if (assoc.type === "hasMany" || assoc.type === "belongsToMany") {
+              parent[as] = [];
+            } else {
+              parent[as] = null;
+            }
           }
         }
         parentMap.set(parentPKValue, parent);
       }
 
-      const parent = parentMap.get(parentPKValue);
-
       for (const inc of includes) {
         const as = inc.as || inc.model.tableName;
-        const assoc = assocByAs.get(as);
+        const assoc = Object.values(this.associations).find((a) => a.as === as);
         if (!assoc) continue;
 
         const childPK = row[`${as}_${inc.model.primaryKey}`];
-        if (childPK === null) continue; // No child in this row
+        if (childPK == null) continue;
 
         const child: any = {};
         for (const field in inc.model.attributes) {
@@ -424,17 +380,13 @@ export abstract class Model {
         }
 
         if (assoc.type === "hasMany" || assoc.type === "belongsToMany") {
-          // Check for duplicates? Assume unique by PK
-          const existing = parent[as].find(
-            (c: any) => c[inc.model.primaryKey] === childPK
-          );
-          if (!existing) {
+          if (
+            !parent[as].some((c: any) => c[inc.model.primaryKey] === childPK)
+          ) {
             parent[as].push(child);
           }
         } else {
-          if (!parent[as]) {
-            parent[as] = child;
-          }
+          parent[as] = child;
         }
       }
     }

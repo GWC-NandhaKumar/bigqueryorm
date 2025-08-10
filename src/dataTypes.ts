@@ -1,7 +1,3 @@
-// File: src/dataTypes.ts
-// Extended DataTypes to include all BigQuery types, including complex ones like ARRAY and STRUCT.
-// For ARRAY and STRUCT, we use objects to define nested types for flexibility.
-
 export type DataType =
   | "STRING"
   | "BYTES"

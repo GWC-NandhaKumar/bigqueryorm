@@ -1,4 +1,3 @@
-// File: src/queryInterface.ts
 import { BigQuery } from "@google-cloud/bigquery";
 import { BigQueryORM } from "./bigQueryORM";
 import { DataTypes, DataType } from "./dataTypes";
@@ -26,7 +25,7 @@ export class QueryInterface {
       createOptions.timePartitioning = {
         type: "DAY",
         field: options.partitionBy,
-      }; // Extend for other types
+      };
     }
     if (options.clusterBy) {
       createOptions.clustering = { fields: options.clusterBy };
@@ -76,7 +75,6 @@ export class QueryInterface {
     columnName: string,
     type: DataType
   ): Promise<void> {
-    // BigQuery limited support; use ALTER for compatible changes, else warn/recreate.
     try {
       const sql = `ALTER TABLE \`${this.orm.config.projectId}.${
         this.orm.config.dataset
@@ -88,14 +86,11 @@ export class QueryInterface {
       console.warn(
         "Type change not supported directly; consider manual migration with temp table."
       );
-      // Implement temp table logic if needed for flexibility.
     }
   }
 
   async addPartition(tableName: string, partitionBy: string): Promise<void> {
-    // BigQuery tables are partitioned at creation; to add, recreate table.
     console.warn("Partitioning requires table recreation.");
-    // Implement recreation logic if scalable.
   }
 
   async addClustering(tableName: string, clusterBy: string[]): Promise<void> {
@@ -122,6 +117,4 @@ export class QueryInterface {
     }
     return "";
   }
-
-  // Add more: addIndex (not directly, but clustering), etc.
 }

@@ -1,10 +1,6 @@
-// File: src/utils.ts
 import { DataType } from "./dataTypes";
 import { Op, Operator } from "./op";
 
-/**
- * Converts DataType to BigQuery schema field format.
- */
 export function dataTypeToSchemaField(name: string, dataType: DataType): any {
   if (typeof dataType === "string") {
     return { name, type: dataType };
@@ -29,9 +25,6 @@ export function dataTypeToSchemaField(name: string, dataType: DataType): any {
   throw new Error(`Unsupported data type: ${JSON.stringify(dataType)}`);
 }
 
-/**
- * Builds parameterized WHERE clause recursively for nested conditions.
- */
 export function buildWhereClause(
   where: any,
   params: Record<string, any> = {},
@@ -46,15 +39,15 @@ export function buildWhereClause(
     if (key === "and" || key === "or") {
       const subResults = (value as any[]).reduce(
         (acc, subCondition) => {
-          const built = buildWhereClause(
-            subCondition,
-            acc.paramsAcc,
-            acc.indexAcc
-          );
+          const {
+            clause,
+            params: subParams,
+            nextIndex,
+          } = buildWhereClause(subCondition, acc.paramsAcc, acc.indexAcc);
           return {
-            clauseAcc: [...acc.clauseAcc, `(${built.clause})`],
-            paramsAcc: { ...acc.paramsAcc, ...built.params },
-            indexAcc: built.nextIndex,
+            clauseAcc: [...acc.clauseAcc, `(${clause})`],
+            paramsAcc: { ...acc.paramsAcc, ...subParams },
+            indexAcc: nextIndex,
           };
         },
         {
@@ -67,7 +60,6 @@ export function buildWhereClause(
       Object.assign(localParams, subResults.paramsAcc);
       paramIndex = subResults.indexAcc;
     } else if (Array.isArray(value)) {
-      // Handle array for IN
       const paramNames = value
         .map((v) => {
           const paramName = `param${paramIndex++}`;
@@ -76,9 +68,13 @@ export function buildWhereClause(
         })
         .join(", ");
       clauses.push(`\`${key}\` IN (${paramNames})`);
-    } else if (typeof value === "object" && value !== null) {
+    } else if (
+      typeof value === "object" &&
+      value !== null &&
+      !Array.isArray(value)
+    ) {
       const opKey = Object.keys(value)[0] as Operator;
-      const opVal = (value as any)[opKey];
+      const opVal = value[opKey as keyof typeof value];
       const sqlOp = Op[opKey] || "=";
       const paramName = `param${paramIndex++}`;
       clauses.push(`\`${key}\` ${sqlOp} @${paramName}`);
