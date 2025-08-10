@@ -1,0 +1,25 @@
+
+{
+  "name": "bigqueryorm",
+  "version": "1.0.0",
+  "description": "A Sequelize-inspired ORM for Google BigQuery in TypeScript",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "lint": "eslint 'src/**/*.ts'"
+  },
+  "dependencies": {
+    "@google-cloud/bigquery": "^7.7.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@typescript-eslint/eslint-plugin": "^6.0.0",
+    "@typescript-eslint/parser": "^6.0.0",
+    "eslint": "^8.0.0",
+    "typescript": "^5.0.0"
+  },
+  "keywords": ["bigquery", "orm", "sequelize", "typescript"],
+  "author": "Nandha Kumar",
+  "license": "MIT"
+}
