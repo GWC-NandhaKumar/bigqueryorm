@@ -1,3 +1,4 @@
+// op.ts
 export const Op = {
   eq: "=",
   ne: "!=",
@@ -20,6 +21,7 @@ export const Op = {
   all: "ALL",
   contains: "@>",
   contained: "<@",
+  add: "+",
 } as const;
 
 export type Operator = keyof typeof Op;

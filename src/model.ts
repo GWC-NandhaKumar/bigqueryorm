@@ -107,16 +107,26 @@ export abstract class Model {
 
   static async findAll(options: FindOptions = {}): Promise<any[]> {
     const { sql, params } = this.buildSelectQuery(options);
-    const [rows] = await this.orm.bigquery.query({ query: sql, params });
-    if (options.raw) {
-      return rows;
+    try {
+      const [rows] = await this.orm.bigquery.query({ query: sql, params });
+      if (options.raw) {
+        return rows;
+      }
+      return this.nestAssociations(rows, options.include || []);
+    } catch (err: any) {
+      console.error("FindAll query failed:", err.message);
+      throw err;
     }
-    return this.nestAssociations(rows, options.include || []);
   }
 
   static async findOne(options: FindOptions = {}): Promise<any | null> {
-    const results = await this.findAll({ ...options, limit: 1 });
-    return results[0] || null;
+    try {
+      const results = await this.findAll({ ...options, limit: 1 });
+      return results[0] || null;
+    } catch (err: any) {
+      console.error("FindOne query failed:", err.message);
+      throw err;
+    }
   }
 
   static async findByPk(
@@ -129,29 +139,72 @@ export abstract class Model {
   static async count(options: FindOptions = {}): Promise<number> {
     const select = `COUNT(DISTINCT \`${this.tableName}\`.\`${this.primaryKey}\`) AS count`;
     const { sql, params } = this.buildSelectQuery(options, select);
-    const [rows] = await this.orm.bigquery.query({ query: sql, params });
-    return rows[0]?.count || 0;
+    try {
+      const [rows] = await this.orm.bigquery.query({ query: sql, params });
+      return rows[0]?.count || 0;
+    } catch (err: any) {
+      console.error("Count query failed:", err.message);
+      throw err;
+    }
   }
 
   static async create(data: Record<string, any>): Promise<any> {
+    if (this.orm.config.freeTierMode) {
+      throw new Error(
+        "Free tier mode: CREATE (INSERT) not allowed. Enable billing at https://console.cloud.google.com/billing."
+      );
+    }
     const table = this.orm.bigquery
       .dataset(this.orm.config.dataset)
       .table(this.tableName);
-    await table.insert([data]);
-    return data;
+    try {
+      await table.insert([data]);
+      if (this.orm.config.logging)
+        console.log(`Created record in ${this.tableName}`);
+      return data;
+    } catch (err: any) {
+      console.error(
+        `Failed to create record in ${this.tableName}:`,
+        err.message
+      );
+      throw err;
+    }
   }
 
   static async bulkCreate(data: Record<string, any>[]): Promise<void> {
+    if (this.orm.config.freeTierMode) {
+      throw new Error(
+        "Free tier mode: BULK CREATE (INSERT) not allowed. Enable billing at https://console.cloud.google.com/billing."
+      );
+    }
+    if (data.length === 0) return;
     const table = this.orm.bigquery
       .dataset(this.orm.config.dataset)
       .table(this.tableName);
-    await table.insert(data);
+    try {
+      await table.insert(data);
+      if (this.orm.config.logging)
+        console.log(`Bulk created ${data.length} records in ${this.tableName}`);
+    } catch (err: any) {
+      console.error(
+        `Failed to bulk create records in ${this.tableName}:`,
+        err.message
+      );
+      throw err;
+    }
   }
 
   static async update(
     data: Record<string, any>,
     options: { where: WhereOptions }
   ): Promise<number> {
+    if (this.orm.config.freeTierMode) {
+      throw new Error(
+        "Free tier mode: UPDATE not allowed. Enable billing at https://console.cloud.google.com/billing."
+      );
+    }
+    console.log("update data", data);
+
     const setClauses = Object.entries(data)
       .map(([field]) => `\`${field}\` = @set_${field}`)
       .join(", ");
@@ -166,31 +219,100 @@ export abstract class Model {
       this.tableName
     }\` SET ${setClauses} WHERE ${whereClause || "TRUE"}`;
     const allParams = { ...setValues, ...whereValues };
-    const [, job] = (await this.orm.bigquery.query({
-      query: sql,
-      params: allParams,
-    })) as [any, Job];
-    const [metadata] = await job.getMetadata();
-    return Number(metadata.statistics?.query?.numDmlAffectedRows || 0);
+
+    console.log("update SqlQUERY", sql);
+
+    try {
+      // Step 1: Create the job
+      const [job] = await this.orm.bigquery.createQueryJob({
+        query: sql,
+        params: allParams,
+      });
+
+      // Step 2: Wait for the job to finish
+      await job.getQueryResults();
+
+      // Step 3: Fetch complete metadata
+      const [metadata] = await job.getMetadata();
+
+      const affectedRows = Number(
+        metadata.statistics?.query?.numDmlAffectedRows || 0
+      );
+
+      if (this.orm.config.logging)
+        console.log(`Updated ${affectedRows} rows in ${this.tableName}`);
+
+      return affectedRows;
+    } catch (err: any) {
+      if (
+        err.message.includes("UPDATE or DELETE statement over table") &&
+        err.message.includes("streaming buffer")
+      ) {
+        throw new Error(
+          `Cannot UPDATE rows currently in the streaming buffer for table ${this.tableName}. Please wait a few minutes before retrying.`
+        );
+      }
+      console.error(
+        `Failed to update records in ${this.tableName}:`,
+        err.message
+      );
+      throw err;
+    }
   }
 
   static async destroy(options: { where: WhereOptions }): Promise<number> {
+    if (this.orm.config.freeTierMode) {
+      throw new Error(
+        "Free tier mode: DESTROY (DELETE) not allowed. Enable billing at https://console.cloud.google.com/billing."
+      );
+    }
+
     const { clause, params } = buildWhereClause(options.where);
     const sql = `DELETE FROM \`${this.orm.config.dataset}.${
       this.tableName
     }\` WHERE ${clause || "TRUE"}`;
-    const [, job] = (await this.orm.bigquery.query({ query: sql, params })) as [
-      any,
-      Job
-    ];
-    const [metadata] = await job.getMetadata();
-    return Number(metadata.statistics?.query?.numDmlAffectedRows || 0);
+
+    try {
+      const [job] = await this.orm.bigquery.createQueryJob({
+        query: sql,
+        params,
+      });
+      await job.getQueryResults();
+      const [metadata] = await job.getMetadata();
+      const affectedRows = Number(
+        metadata.statistics?.query?.numDmlAffectedRows || 0
+      );
+
+      if (this.orm.config.logging)
+        console.log(`Deleted ${affectedRows} rows from ${this.tableName}`);
+
+      return affectedRows;
+    } catch (err: any) {
+      if (
+        err.message.includes("UPDATE or DELETE statement over table") &&
+        err.message.includes("streaming buffer")
+      ) {
+        throw new Error(
+          `Cannot DELETE rows currently in the streaming buffer for table ${this.tableName}. Please wait a few minutes before retrying.`
+        );
+      }
+      console.error(
+        `Failed to delete records from ${this.tableName}:`,
+        err.message
+      );
+      throw err;
+    }
   }
 
   static async increment(
     fields: string | string[],
     options: { by?: number; where: WhereOptions }
   ): Promise<number> {
+    if (this.orm.config.freeTierMode) {
+      throw new Error(
+        "Free tier mode: INCREMENT (UPDATE) not allowed. Enable billing at https://console.cloud.google.com/billing."
+      );
+    }
     const by = options.by || 1;
     const fieldArray = Array.isArray(fields) ? fields : [fields];
     const setClauses = fieldArray
@@ -202,20 +324,32 @@ export abstract class Model {
     const sql = `UPDATE \`${this.orm.config.dataset}.${
       this.tableName
     }\` SET ${setClauses} WHERE ${whereClause || "TRUE"}`;
-    const [, job] = (await this.orm.bigquery.query({
-      query: sql,
-      params: whereValues,
-    })) as [any, Job];
-    const [metadata] = await job.getMetadata();
-    return Number(metadata.statistics?.query?.numDmlAffectedRows || 0);
+    try {
+      const [, job] = (await this.orm.bigquery.query({
+        query: sql,
+        params: whereValues,
+      })) as [any, Job];
+      const [metadata] = await job.getMetadata();
+      const affectedRows = Number(
+        metadata.statistics?.query?.numDmlAffectedRows || 0
+      );
+      if (this.orm.config.logging)
+        console.log(`Incremented ${affectedRows} rows in ${this.tableName}`);
+      return affectedRows;
+    } catch (err: any) {
+      console.error(
+        `Failed to increment fields in ${this.tableName}:`,
+        err.message
+      );
+      throw err;
+    }
   }
 
   static async decrement(
     fields: string | string[],
     options: { by?: number; where: WhereOptions }
   ): Promise<number> {
-    const by = options.by || 1;
-    return this.increment(fields, { ...options, by: -by });
+    return this.increment(fields, { ...options, by: -(options.by || 1) });
   }
 
   private static buildSelectQuery(
