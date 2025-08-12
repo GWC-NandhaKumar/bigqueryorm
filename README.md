@@ -23,9 +23,9 @@ This library is ideal for developers building data-intensive applications on Big
 ## Installation
 
 ```bash
-npm install bigquery-orm
+npm install bq-orm
 # or
-yarn add bigquery-orm
+yarn add bq-orm
 ```
 
 This package depends on `@google-cloud/bigquery`. Ensure you have Google Cloud credentials set up (e.g., via `GOOGLE_APPLICATION_CREDENTIALS` env var).
@@ -37,7 +37,7 @@ This package depends on `@google-cloud/bigquery`. Ensure you have Google Cloud c
 Initialize the ORM with your BigQuery project details:
 
 ```typescript
-import { BigQueryORM } from "bigquery-orm";
+import { BigQueryORM } from "bq-orm";
 
 const orm = new BigQueryORM({
   projectId: "your-project-id",
@@ -57,7 +57,7 @@ Environment variables like `GOOGLE_CLOUD_PROJECT` and `BIGQUERY_DATASET` can be 
 Models extend an abstract `Model` class. Define attributes using `DataTypes`:
 
 ```typescript
-import { BigQueryORM, DataTypes, Model } from "bigquery-orm";
+import { BigQueryORM, DataTypes, Model } from "bq-orm";
 
 class User extends Model {}
 

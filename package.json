@@ -1,7 +1,6 @@
-
 {
-  "name": "bigqueryorm",
-  "version": "1.0.0",
+  "name": "bq-orm",
+  "version": "1.0.1",
   "description": "A Sequelize-inspired ORM for Google BigQuery in TypeScript",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -19,7 +18,20 @@
     "eslint": "^8.0.0",
     "typescript": "^5.0.0"
   },
-  "keywords": ["bigquery", "orm", "sequelize", "typescript"],
+  "keywords": [
+    "bigquery",
+    "orm",
+    "sequelize",
+    "typescript"
+  ],
   "author": "Nandha Kumar",
-  "license": "MIT"
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/GWC-NandhaKumar/bigqueryorm.git"
+  },
+  "bugs": {
+    "url": "https://github.com/GWC-NandhaKumar/bigqueryorm/issues"
+  },
+  "homepage": "https://github.com/GWC-NandhaKumar/bigqueryorm#readme"
 }
